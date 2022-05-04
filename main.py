@@ -3,6 +3,7 @@ from env.mujoco import Hopper
 from typing import Sequence
 from ipdb import set_trace
 from collections import defaultdict
+from functools import partial
 import jax
 from jax import random, numpy as jnp                # JAX NumPy
 from flax import linen as nn           # The Linen API
@@ -33,23 +34,19 @@ class MLP(nn.Module):
     x = nn.Dense(Hopper.action_count)(x)
     return x
 
-@jax.jit
-def act_on(params, state, rng):
-    agent = MLP()
+@partial(jax.jit, static_argnums=1)
+@partial(jax.grad, has_aux=True)
+def act_on(params, agent, state, rng):
     logits = agent.apply(params, state)
     action = jax.random.categorical(rng, logits, -1)
-    @jax.grad
-    def grad_neg_log_prob(params):
-        logits = agent.apply(params, state)
-        action_log_probs = -jnp.take(jax.nn.log_softmax(logits, -1), action, -1)
-        return action_log_probs
-    grad = grad_neg_log_prob(params)
-    return action, grad
+    action_log_probs = -jnp.take(jax.nn.log_softmax(logits, -1), action, -1)
+    return action_log_probs, (action_log_probs, logits, action)
 
 if __name__ == '__main__':
-    GAMES_PER_PHASE = 100
+    GAMES_PER_PHASE = 250
     ENVIRONMENTS = 12
-    LR = .01
+    BATCH_SIZE = 6
+    LR = .00001
 
     ## Initialize environments
     environments = {env_id: Environment.remote(env_id) for env_id in range(ENVIRONMENTS)}
@@ -79,7 +76,8 @@ if __name__ == '__main__':
             for env_id, game_id, env_state, score in [ray.get(f) for f in ready]:
                 if score is None: ## Game is ongoing
                     rng, _rng = random.split(rng, 2)
-                    action, grad = act_on(params, env_state, _rng)
+                    grad, (loss, logits, action) = act_on(params, agent, env_state, _rng)
+                    # print(loss, logits, action)
                     futures.append(environments[env_id].step.remote(action))
                     game_gradients[game_id] = jax.tree_map(lambda gg, g: gg + g, game_gradients[game_id], grad)
                 else: ## Game has terminated
