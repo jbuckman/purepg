@@ -1,5 +1,6 @@
 import ray
 from env.mujoco import Hopper
+from env.cartpole import CartPole
 from typing import Sequence
 from ipdb import set_trace
 from collections import defaultdict
@@ -9,7 +10,9 @@ from jax import random, numpy as jnp                # JAX NumPy
 from flax import linen as nn           # The Linen API
 import numpy as np                     # Ordinary NumPy
 import optax                           # Optimizers
-ray.init(num_cpus=4)
+# ray.init(num_cpus=4)
+
+ENV = CartPole
 
 @ray.remote(num_cpus=.1)
 class Environment(object):
@@ -17,7 +20,7 @@ class Environment(object):
         self.env_id = env_id
 
     def reset(self, game_id):
-        self.env = Hopper()
+        self.env = ENV()
         self.score = 0
         self.game_id = game_id
         return self.env_id, self.game_id, self.env.state_rep(), None
@@ -31,7 +34,7 @@ class MLP(nn.Module):
   def __call__(self, x):
     for feat in [32, 64, 64]:
       x = nn.relu(nn.Dense(feat)(x))
-    x = nn.Dense(Hopper.action_count)(x)
+    x = nn.Dense(ENV.action_count)(x)
     return x
 
 @partial(jax.jit, static_argnums=1)
@@ -43,10 +46,9 @@ def act_on(params, agent, state, rng):
     return action_log_probs, (action_log_probs, logits, action)
 
 if __name__ == '__main__':
-    GAMES_PER_PHASE = 250
-    ENVIRONMENTS = 12
-    BATCH_SIZE = 6
-    LR = .00001
+    GAMES_PER_PHASE = 100
+    ENVIRONMENTS = 100
+    LR = .0001
 
     ## Initialize environments
     environments = {env_id: Environment.remote(env_id) for env_id in range(ENVIRONMENTS)}
@@ -55,8 +57,8 @@ if __name__ == '__main__':
     rng = jax.random.PRNGKey(0)
     agent = MLP()
     rng, _rng = random.split(rng, 2)
-    params = agent.init(_rng, jnp.ones([*Hopper.state_shape]))
-    tx = optax.sgd(LR)
+    params = agent.init(_rng, jnp.ones([*ENV.state_shape]))
+    tx = optax.adam(LR)
     opt_state = tx.init(params)
 
     for step in range(1000):
@@ -77,7 +79,6 @@ if __name__ == '__main__':
                 if score is None: ## Game is ongoing
                     rng, _rng = random.split(rng, 2)
                     grad, (loss, logits, action) = act_on(params, agent, env_state, _rng)
-                    # print(loss, logits, action)
                     futures.append(environments[env_id].step.remote(action))
                     game_gradients[game_id] = jax.tree_map(lambda gg, g: gg + g, game_gradients[game_id], grad)
                 else: ## Game has terminated
