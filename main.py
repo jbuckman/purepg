@@ -1,33 +1,38 @@
 import ray
 from env.mujoco import Hopper
 from env.cartpole import CartPole
+from env.tabular import DontDiscountMe
 from typing import Sequence
 from ipdb import set_trace
 from collections import defaultdict
 from functools import partial
 import jax
-from jax import random, numpy as jnp                # JAX NumPy
+from jax import random, numpy as jnp   # JAX NumPy
 from flax import linen as nn           # The Linen API
 import numpy as np                     # Ordinary NumPy
 import optax                           # Optimizers
 # ray.init(num_cpus=4)
 
-ENV = CartPole
+ENV = DontDiscountMe
 
-@ray.remote(num_cpus=.1)
+@ray.remote(num_cpus=1)
 class Environment(object):
-    def __init__(self, env_id):
+    def __init__(self, env_id, γ=1.0):
         self.env_id = env_id
+        self.γ = γ
 
     def reset(self, game_id):
         self.env = ENV()
         self.score = 0
+        self.discounted_score = 0
         self.game_id = game_id
         return self.env_id, self.game_id, self.env.state_rep(), None
 
     def step(self, action):
-        self.score += self.env.step(action)
-        return self.env_id, self.game_id, self.env.state_rep(), None if not self.env.terminated else self.score
+        reward = self.env.step(action)
+        self.score += reward
+        self.discounted_score += (self.γ**(self.env.steps-1)) * reward
+        return self.env_id, self.game_id, self.env.state_rep(), None if not self.env.terminated else (self.score, self.discounted_score)
 
 class MLP(nn.Module):
   @nn.compact
@@ -47,11 +52,15 @@ def act_on(params, agent, state, rng):
 
 if __name__ == '__main__':
     GAMES_PER_PHASE = 100
-    ENVIRONMENTS = 100
+    ENVIRONMENTS = 20
     LR = .0001
+    γ = 1.
+    LOGFILE = f"output/tabular_{γ}.csv"
 
+    ## Clear logs
+    with open(LOGFILE, "w") as f: f.write("episodes,score,discounted_score")
     ## Initialize environments
-    environments = {env_id: Environment.remote(env_id) for env_id in range(ENVIRONMENTS)}
+    environments = {env_id: Environment.remote(env_id, γ) for env_id in range(ENVIRONMENTS)}
 
     ## Initialize agent
     rng = jax.random.PRNGKey(0)
@@ -66,6 +75,7 @@ if __name__ == '__main__':
         ## Reset accumulators
         game_gradients = defaultdict(lambda :jax.tree_map(lambda x: jnp.zeros_like(x), params))
         results = np.zeros(GAMES_PER_PHASE)
+        discounted_results = np.zeros(GAMES_PER_PHASE)
         ## Begin interacting
         games_deployed = 0
         games_completed = 0
@@ -82,7 +92,7 @@ if __name__ == '__main__':
                     futures.append(environments[env_id].step.remote(action))
                     game_gradients[game_id] = jax.tree_map(lambda gg, g: gg + g, game_gradients[game_id], grad)
                 else: ## Game has terminated
-                    results[game_id] = score
+                    results[game_id], discounted_results[game_id] = score
                     games_completed += 1
                     print(f"==> Step {step: 4}. Score: {np.sum(results)/games_completed:.2f} ({games_completed/GAMES_PER_PHASE:.1%})               ", end="\r")
                     if games_deployed < GAMES_PER_PHASE:
@@ -90,7 +100,10 @@ if __name__ == '__main__':
                         games_deployed += 1
 
         ## Update model
-        rescaled_gradients = {game_id: jax.tree_map(lambda g: results[game_id] * g, game_gradients[game_id]) for game_id in game_gradients}
+        rescaled_gradients = {game_id: jax.tree_map(lambda g: discounted_results[game_id] * g, game_gradients[game_id]) for game_id in game_gradients}
         overall_gradient = jax.tree_map(lambda *gs: sum(gs), *list(rescaled_gradients.values()))
         updates, opt_state = tx.update(overall_gradient, opt_state)
         params = optax.apply_updates(params, updates)
+
+        ## Log outcome
+        with open(LOGFILE, "a") as f: f.write(f"\n{step*GAMES_PER_PHASE},{np.sum(results)/games_completed:.4f},{np.sum(discounted_results)/games_completed:.4f}")

@@ -57,7 +57,7 @@ if __name__ == '__main__':
     _t = time.time()
     steps = 0
     for _ in range(20):
-        game = Hopper()
+        game = CartPole()
         while not game.terminated:
             state = game.state_rep()
             r = game.step(random.choice(game.legal_action_set))

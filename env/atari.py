@@ -5,7 +5,10 @@ try:
     import ale_py.roms
 except:
     print("Atari not loaded.")
-import cv2
+try:
+    import cv2
+except:
+    print("Atari not loaded because cv2 is missing.")
 import numpy as np
 
 from env import BaseEnv
