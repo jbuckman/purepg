@@ -61,7 +61,7 @@ if __name__ == '__main__':
     tx = optax.adam(LR)
     opt_state = tx.init(params)
 
-    for step in range(1000):
+    for step in range(10000000):
         print(f"\n==> Step {step: 4}.", end="\r")
         ## Reset accumulators
         game_gradients = defaultdict(lambda :jax.tree_map(lambda x: jnp.zeros_like(x), params))
