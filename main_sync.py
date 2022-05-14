@@ -1,5 +1,6 @@
 from ipdb import set_trace
 from collections import defaultdict
+import random as pyrand
 from functools import partial
 import jax
 from jax import random, numpy as jnp                # JAX NumPy
@@ -29,18 +30,22 @@ def average_gradients(results, running_gradients):
     return jax.tree_map(lambda rg: (rg * front_broadcast(results, rg)).mean(0), running_gradients)
 
 if __name__ == '__main__':
-    EPISODES_PER_GRADIENT = 1000
-    LR = .0001
+    EPISODES_PER_GRADIENT = 50
+    LR = .00001
 
     ## Initialize environments
-    env = envpool.make("CartPole-v1", env_type="gym", num_envs=EPISODES_PER_GRADIENT)
+    env = envpool.make("Hopper-v4", env_type="gym", num_envs=EPISODES_PER_GRADIENT)
 
     ## Model
     class MLP(nn.Module):
+        width = 1024
+        depth = 4
+
         @nn.compact
         def __call__(self, x):
-            for feat in [32, 64, 64]:
-                x = nn.relu(nn.Dense(feat)(x))
+            x = nn.Dense(self.width)(x)
+            for layer in range(self.depth):
+                x += nn.Dense(self.width)(nn.relu(x))
             x = nn.Dense(env.action_space.n)(x)
             return x
 
@@ -69,6 +74,7 @@ if __name__ == '__main__':
             results += rew * episodes_ongoing
             episodes_ongoing *= 1 - done.astype(float)
             running_gradients = update_gradients(episodes_ongoing, running_gradients, grad)
+            if pyrand.random() < .001: print(jax.nn.softmax(logits,-1)[0])
 
             print(f"==> Step {step: 4}. ({1 - episodes_ongoing.sum() / EPISODES_PER_GRADIENT:.1%})               ", end="\r")
         print(f"==> Step {step: 4}. Score: {results.mean()}                                                            ")
