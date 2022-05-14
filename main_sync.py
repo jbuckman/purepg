@@ -12,7 +12,7 @@ def front_broadcast(base, to):
     return base.reshape(base.shape[0], *[1]*(len(to.shape) - 1))
 
 @partial(jax.jit, static_argnums=1)
-@partial(jax.vmap, in_axes=(None, None, 0, None))
+@partial(jax.vmap, in_axes=(None, None, 0, 0))
 @partial(jax.grad, has_aux=True)
 def act_on(params, agent, state, rng):
     logits = agent.apply(params, state)
@@ -21,21 +21,19 @@ def act_on(params, agent, state, rng):
     return action_log_probs, (action_log_probs, logits, action)
 
 @jax.jit
-def update_gradients(env_id, episodes_ongoing, running_gradients, grad):
-    ongoing_mask = episodes_ongoing[env_id]
-    return jax.tree_map(lambda rg, g: rg.at[env_id].set(rg[env_id] + g * front_broadcast(ongoing_mask, g)), running_gradients, grad)
+def update_gradients(episodes_ongoing, running_gradients, grad):
+    return jax.tree_map(lambda rg, g: rg + g * front_broadcast(episodes_ongoing, g), running_gradients, grad)
 
 @jax.jit
 def average_gradients(results, running_gradients):
     return jax.tree_map(lambda rg: (rg * front_broadcast(results, rg)).mean(0), running_gradients)
 
 if __name__ == '__main__':
-    EPISODES_PER_GRADIENT = 100
-    BATCH_SIZE = 10
+    EPISODES_PER_GRADIENT = 1000
     LR = .0001
 
     ## Initialize environments
-    env = envpool.make("CartPole-v1", env_type="gym", num_envs=EPISODES_PER_GRADIENT, batch_size=BATCH_SIZE)
+    env = envpool.make("CartPole-v1", env_type="gym", num_envs=EPISODES_PER_GRADIENT)
 
     ## Model
     class MLP(nn.Module):
@@ -62,17 +60,15 @@ if __name__ == '__main__':
         results = np.zeros(EPISODES_PER_GRADIENT)
         episodes_ongoing = np.ones(EPISODES_PER_GRADIENT)
         ## Begin interacting
-        env.async_reset()
+        state = env.reset()
         while episodes_ongoing.sum() > 0:
-            state, rew, done, info = env.recv()
-            env_id = info["env_id"]
-            results[env_id] += rew * episodes_ongoing[env_id]
-            episodes_ongoing[env_id] *= 1 - done.astype(float)
-
-            rng, _rng = random.split(rng, 2)
+            rng = random.split(rng, EPISODES_PER_GRADIENT+1)
+            rng, _rng = rng[0], rng[1:]
             grad, (loss, logits, action) = act_on(params, agent, state, _rng)
-            env.send(np.array(action), env_id)
-            running_gradients = update_gradients(env_id, episodes_ongoing, running_gradients, grad)
+            state, rew, done, info = env.step(np.array(action))
+            results += rew * episodes_ongoing
+            episodes_ongoing *= 1 - done.astype(float)
+            running_gradients = update_gradients(episodes_ongoing, running_gradients, grad)
 
             print(f"==> Step {step: 4}. ({1 - episodes_ongoing.sum() / EPISODES_PER_GRADIENT:.1%})               ", end="\r")
         print(f"==> Step {step: 4}. Score: {results.mean()}                                                            ")
