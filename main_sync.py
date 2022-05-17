@@ -8,6 +8,25 @@ from flax import linen as nn           # The Linen API
 import numpy as np                     # Ordinary NumPy
 import optax                           # Optimizers
 import envpool
+from itertools import product
+
+class WrappedEnvpool:
+    def __init__(self, name, env_type, num_envs, discretization=None):
+        self.env = envpool.make(name, env_type=env_type, num_envs=num_envs)
+        self.state_shape = self.env.observation_space.shape
+        if 'n' in self.env.action_space.__dict__:
+            self.action_n = self.env.action_space.n
+            self.discretization = None
+        else:
+            assert discretization is not None
+            self.action_n = discretization**self.env.action_space.shape[0]
+            self.discretization = np.linspace(self.env.action_space.low, self.env.action_space.high, discretization).T
+            self.discretization_map = np.array(list(product(*self.discretization)))
+    def reset(self):
+        return self.env.reset()
+    def step(self, action):
+        if self.discretization is not None: action = self.discretization_map[action]
+        return self.env.step(action)
 
 def front_broadcast(base, to):
     return base.reshape(base.shape[0], *[1]*(len(to.shape) - 1))
@@ -30,32 +49,37 @@ def average_gradients(results, running_gradients):
     return jax.tree_map(lambda rg: (rg * front_broadcast(results, rg)).mean(0), running_gradients)
 
 if __name__ == '__main__':
+    ACTION_DISCRETIZATION = 11 # only relevant for continuous action spaces
     EPISODES_PER_GRADIENT = 50
+    OPT = optax.adam
     LR = .00001
+    REMEMBER = 1000
 
     ## Initialize environments
-    env = envpool.make("Hopper-v4", env_type="gym", num_envs=EPISODES_PER_GRADIENT)
+    env = WrappedEnvpool("Hopper-v4", env_type="gym", num_envs=EPISODES_PER_GRADIENT, discretization=ACTION_DISCRETIZATION)
 
     ## Model
     class MLP(nn.Module):
         width = 1024
-        depth = 4
+        depth = 8
 
         @nn.compact
         def __call__(self, x):
             x = nn.Dense(self.width)(x)
             for layer in range(self.depth):
                 x += nn.Dense(self.width)(nn.relu(x))
-            x = nn.Dense(env.action_space.n)(x)
+            x = nn.Dense(env.action_n)(x)
             return x
 
     ## Initialize agent
     rng = jax.random.PRNGKey(0)
     agent = MLP()
     rng, _rng = random.split(rng, 2)
-    params = agent.init(_rng, jnp.ones([*env.observation_space.shape]))
-    tx = optax.adam(LR)
+    params = agent.init(_rng, jnp.ones(env.state_shape))
+    params = jax.tree_map(lambda x: x*.0001, params)
+    tx = OPT(LR)
     opt_state = tx.init(params)
+    scores_history = jnp.array([])
 
     for step in range(10000000):
         print(f"==> Step {step: 4}.", end="\r")
@@ -74,10 +98,9 @@ if __name__ == '__main__':
             results += rew * episodes_ongoing
             episodes_ongoing *= 1 - done.astype(float)
             running_gradients = update_gradients(episodes_ongoing, running_gradients, grad)
-            if pyrand.random() < .001: print(jax.nn.softmax(logits,-1)[0])
 
             print(f"==> Step {step: 4}. ({1 - episodes_ongoing.sum() / EPISODES_PER_GRADIENT:.1%})               ", end="\r")
-        print(f"==> Step {step: 4}. Score: {results.mean()}                                                            ")
+        print(f"==> Step {step: 4}. Score: {results.mean():.2f} ± {jnp.std(results, ddof=1):.2f}                                                         ")
         ## Update model
         overall_gradient = average_gradients(results, running_gradients)
         updates, opt_state = tx.update(overall_gradient, opt_state)
