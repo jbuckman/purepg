@@ -52,7 +52,7 @@ if __name__ == '__main__':
     ACTION_DISCRETIZATION = 11 # only relevant for continuous action spaces
     EPISODES_PER_GRADIENT = 50
     OPT = optax.adam
-    LR = .00001
+    LR = .0001
     REMEMBER = 1000
 
     ## Initialize environments
@@ -69,14 +69,14 @@ if __name__ == '__main__':
             for layer in range(self.depth):
                 x += nn.Dense(self.width)(nn.relu(x))
             x = nn.Dense(env.action_n)(x)
-            return x
+            return x*.00001
 
     ## Initialize agent
     rng = jax.random.PRNGKey(0)
     agent = MLP()
     rng, _rng = random.split(rng, 2)
     params = agent.init(_rng, jnp.ones(env.state_shape))
-    params = jax.tree_map(lambda x: x*.0001, params)
+    params = jax.tree_map(lambda x: x*.01, params)
     tx = OPT(LR)
     opt_state = tx.init(params)
     scores_history = jnp.array([])
