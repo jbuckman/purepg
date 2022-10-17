@@ -55,6 +55,7 @@ if __name__ == '__main__':
     LR = .0001
     REMEMBER = 1000
 
+    with open("output.csv", "w") as f: f.write("")
     ## Initialize environments
     env = WrappedEnvpool("Hopper-v4", env_type="gym", num_envs=EPISODES_PER_GRADIENT, discretization=ACTION_DISCRETIZATION)
 
@@ -101,6 +102,7 @@ if __name__ == '__main__':
 
             print(f"==> Step {step: 4}. ({1 - episodes_ongoing.sum() / EPISODES_PER_GRADIENT:.1%})               ", end="\r")
         print(f"==> Step {step: 4}. Score: {results.mean():.2f} ± {jnp.std(results, ddof=1):.2f}                                                         ")
+        with open("output.csv", "a") as f: f.write(f"{step},{results.mean():.2f},{jnp.std(results, ddof=1):.2f}\n")
         ## Update model
         overall_gradient = average_gradients(results, running_gradients)
         updates, opt_state = tx.update(overall_gradient, opt_state)

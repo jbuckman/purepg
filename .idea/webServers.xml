@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="a3c187be-6c76-430d-870e-13715b083855" name="mila">
+        <fileTransfer accessType="SFTP" host="138.207.250.48" port="12448" sshConfigId="ac31213a-685b-4aff-ac36-bf8751bce4bc" sshConfig="root@138.207.250.48:12448 key" keyPair="true">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+      <webServer id="e91f8066-2d21-475e-b0c7-0727e2e6d5ea" name="runpod">
+        <fileTransfer accessType="SFTP" host="138.207.250.48" port="12448" sshConfigId="ac31213a-685b-4aff-ac36-bf8751bce4bc" sshConfig="root@138.207.250.48:12448 key" keyPair="true">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>

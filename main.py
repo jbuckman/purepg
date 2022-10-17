@@ -33,6 +33,7 @@ if __name__ == '__main__':
     EPISODES_PER_GRADIENT = 100
     BATCH_SIZE = 10
     LR = .0001
+    OPT = optax.adam(LR)
 
     ## Initialize environments
     env = envpool.make("CartPole-v1", env_type="gym", num_envs=EPISODES_PER_GRADIENT, batch_size=BATCH_SIZE)
@@ -77,6 +78,7 @@ if __name__ == '__main__':
             print(f"==> Step {step: 4}. ({1 - episodes_ongoing.sum() / EPISODES_PER_GRADIENT:.1%})               ", end="\r")
         print(f"==> Step {step: 4}. Score: {results.mean()}                                                            ")
         ## Update model
-        overall_gradient = average_gradients(results, running_gradients)
+        normalized_results = (results - results.min()) / (results.max() - results.min())
+        overall_gradient = average_gradients(normalized_results, running_gradients)
         updates, opt_state = tx.update(overall_gradient, opt_state)
         params = optax.apply_updates(params, updates)
